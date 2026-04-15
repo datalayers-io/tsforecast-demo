@@ -21,8 +21,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=1000,
-        help="Rows per insert statement (default: 1000)",
+        default=100,
+        help="Rows per insert statement (default: 100)",
     )
     parser.add_argument(
         "--skip-header-check",
