@@ -2,26 +2,28 @@
 import argparse
 import csv
 import re
-import subprocess
 import sys
 from pathlib import Path
+from flightsql import FlightSQLClient
 
 _NUMERIC_RE = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Batch import CSV via SQL HTTP API using curl."
+        description="Batch import CSV via FlightSQL."
     )
     parser.add_argument("--csv", required=True, help="Path to input CSV file")
-    parser.add_argument("--table", default="test.electricity", help="Target table")
-    parser.add_argument("--url", default="http://localhost:8361/api/v1/sql", help="SQL API URL")
+    parser.add_argument("--table", required=True, help="Target table")
+    parser.add_argument("--host", default="localhost", help="FlightSQL host")
+    parser.add_argument("--port", type=int, default=8360, help="FlightSQL port")
     parser.add_argument("--user", default="admin", help="API username")
     parser.add_argument("--password", default="public", help="API password")
+    parser.add_argument("--db", help="Metadata field: database")
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=100,
+        default=1000,
         help="Rows per insert statement (default: 100)",
     )
     parser.add_argument(
@@ -46,7 +48,7 @@ def sql_literal(value: str) -> str:
 
 
 def build_insert_sql(table: str, columns: list[str], rows: list[list[str]]) -> str:
-    cols = ", ".join(columns)
+    cols = ", ".join(f"`{c}`" for c in columns)
     values_sql = []
     for row in rows:
         literals = [sql_literal(v) for v in row]
@@ -54,22 +56,28 @@ def build_insert_sql(table: str, columns: list[str], rows: list[list[str]]) -> s
     return f"insert into {table} ({cols}) values " + ", ".join(values_sql)
 
 
-def send_sql(url: str, user: str, password: str, sql: str) -> tuple[int, str, str]:
-    cmd = [
-        "curl",
-        "-sS",
-        "-u",
-        f"{user}:{password}",
-        "-X",
-        "POST",
-        url,
-        "-H",
-        "Content-Type: application/binary",
-        "--data-binary",
-        sql,
-    ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+def send_sql(client: FlightSQLClient, sql: str) -> tuple[int, str, str]:
+    try:
+        info = client.execute(sql)
+        endpoint_count = 0
+        for ep in getattr(info, "endpoints", []):
+            endpoint_count += 1
+            _ = client.do_get(ep.ticket).read_all()
+        return 0, f"ok (endpoints={endpoint_count})", ""
+    except Exception as e:
+        return 1, "", str(e)
+
+
+def query_count(client: FlightSQLClient, table: str) -> int:
+    sql = f"select count(*) as cnt from {table}"
+    info = client.execute(sql)
+    for ep in getattr(info, "endpoints", []):
+        table_data = client.do_get(ep.ticket).read_all()
+        if "cnt" in table_data.column_names:
+            vals = table_data["cnt"].to_pylist()
+            if vals:
+                return int(vals[0])
+    raise RuntimeError("failed to read count(*) result")
 
 
 def main() -> int:
@@ -82,6 +90,25 @@ def main() -> int:
     if args.batch_size <= 0:
         print("ERROR: --batch-size must be > 0", file=sys.stderr)
         return 1
+    if args.port <= 0:
+        print("ERROR: --port must be > 0", file=sys.stderr)
+        return 1
+
+    client = FlightSQLClient(
+        host=args.host,
+        port=args.port,
+        insecure=not args.secure,
+        user=args.user,
+        password=args.password,
+        metadata={"database": args.db},
+    )
+
+    try:
+        count_before = query_count(client, args.table)
+        print(f"Pre-check count({args.table}) = {count_before}")
+    except Exception as e:
+        print(f"WARNING: count pre-check failed: {e}", file=sys.stderr)
+        count_before = None
 
     with csv_path.open("r", encoding="utf-8", newline="") as f:
         reader = csv.reader(f)
@@ -112,9 +139,12 @@ def main() -> int:
             if len(batch) >= args.batch_size:
                 batch_no += 1
                 sql = build_insert_sql(args.table, columns, batch)
-                code, out, err = send_sql(args.url, args.user, args.password, sql)
+                code, out, err = send_sql(client, sql)
                 if code != 0:
-                    print(f"ERROR: curl failed on batch {batch_no}: {err}", file=sys.stderr)
+                    print(
+                        f"ERROR: FlightSQL execute failed on batch {batch_no}: {err}",
+                        file=sys.stderr,
+                    )
                     return code
                 print(f"[batch {batch_no}] imported {len(batch)} rows | response: {out}")
                 total_rows += len(batch)
@@ -123,14 +153,25 @@ def main() -> int:
         if batch:
             batch_no += 1
             sql = build_insert_sql(args.table, columns, batch)
-            code, out, err = send_sql(args.url, args.user, args.password, sql)
+            code, out, err = send_sql(client, sql)
             if code != 0:
-                print(f"ERROR: curl failed on batch {batch_no}: {err}", file=sys.stderr)
+                print(
+                    f"ERROR: FlightSQL execute failed on batch {batch_no}: {err}",
+                    file=sys.stderr,
+                )
                 return code
             print(f"[batch {batch_no}] imported {len(batch)} rows | response: {out}")
             total_rows += len(batch)
 
     print(f"Done. Total imported rows: {total_rows}")
+    try:
+        count_after = query_count(client, args.table)
+        if count_before is not None:
+            print(f"Post-check count({args.table}) = {count_after} (delta={count_after - count_before})")
+        else:
+            print(f"Post-check count({args.table}) = {count_after}")
+    except Exception as e:
+        print(f"WARNING: count post-check failed: {e}", file=sys.stderr)
     return 0
 
 
