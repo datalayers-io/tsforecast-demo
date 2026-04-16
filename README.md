@@ -12,7 +12,7 @@ It demonstrates a complete minimal workflow:
 ## Environment Requirements
 
 - Python `>= 3.10`
-- A running Datalayers instance (with FlightSQL enabled). We recommend running datalayers on docker.
+- A running Datalayers instance (with FlightSQL enabled). We recommend running Datalayers on docker.
 - Network access from this project to your Datalayers service
 
 ## Required Python Dependencies
@@ -23,7 +23,8 @@ Install the required libraries in your environment:
 pip install \
   pandas \
   matplotlib \
-  flightsql-dbapi
+  flightsql-dbapi \
+  kagglehub
 ```
 
 Notes:
