@@ -37,8 +37,7 @@ Notes:
 ```bash
 # Run sql in scripts/init_db.sql against your Datalayers SQL endpoint
 # We provide `dlsql` to connect Datalayers server with following commands:
-cd path/to/dlsql
-./dlsql -h localhost -P 8360 -u admin -p public
+dlsql -h localhost -P 8360 -u admin -p public
 # After entering the cli, you can create database using `CREATE DATABASE <dbname>`, and `exit` to exit.
 # If you are not changed to the target database, use `use <dbname>` to enter your database.
 ```
@@ -67,6 +66,6 @@ python example/visualization.py
 - `outputs/timesfm25_forecast.csv`
 - `outputs/timesfm25_visualization.png`
 
-
+![](visualization_result.png)
 
 This setup is intended for experimentation and learning.
