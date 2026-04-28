@@ -97,7 +97,7 @@ def main() -> int:
     client = FlightSQLClient(
         host=args.host,
         port=args.port,
-        insecure=not args.secure,
+        insecure=True,
         user=args.user,
         password=args.password,
         metadata={"database": args.db},
